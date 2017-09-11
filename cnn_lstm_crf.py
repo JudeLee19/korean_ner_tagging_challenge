@@ -26,7 +26,6 @@ class CnnLstmCrfModel(object):
         self.filter_sizes = filter_sizes
         self.num_filters = 128
         self.l2_reg_lambda = 0.0
-        
         self.cnn_word_lengths = 15
         
     def add_placeholders(self):
@@ -53,6 +52,10 @@ class CnnLstmCrfModel(object):
         # shape = (batch size, max length of sentence in batch)
         self.mor_tags = tf.placeholder(tf.int32, shape=[None, None],
                                      name="mor_tags")
+
+        # shape = (batch size, max length of sentence in batch)
+        self.lex_tags = tf.placeholder(tf.int32, shape=[None, None],
+                                       name="lexicon_tags")
         
         # shape = (batch size, max length of sentence in batch)
         self.labels = tf.placeholder(tf.int32, shape=[None, None],
@@ -64,7 +67,7 @@ class CnnLstmCrfModel(object):
         self.lr = tf.placeholder(dtype=tf.float32, shape=[],
                                  name="lr")
     
-    def get_feed_dict(self, words, mor_tags=None, labels=None, lr=None, dropout=None):
+    def get_feed_dict(self, words, mor_tags=None, lex_tags=None, labels=None, lr=None, dropout=None):
         """
         Given some data, pad it and build a feed dictionary
         Args:
@@ -95,6 +98,10 @@ class CnnLstmCrfModel(object):
             feed[self.word_lengths] = word_lengths
             self.cnn_word_lengths = word_lengths
         
+        if lex_tags is not None:
+            lex_tags, _ = pad_sequences(lex_tags, 0)
+            feed[self.lex_tags] = lex_tags
+        
         if mor_tags is not None:
             mor_tags, _ = pad_sequences(mor_tags, 0)
             feed[self.mor_tags] = mor_tags
@@ -109,9 +116,6 @@ class CnnLstmCrfModel(object):
         if dropout is not None:
             feed[self.dropout] = dropout
         
-        # print('\n=========================')
-        # print(type(feed[self.labels]))
-        # print('\n=========================')
         return feed, sequence_lengths
     
     def add_word_embeddings_op(self):
@@ -126,7 +130,12 @@ class CnnLstmCrfModel(object):
         with tf.variable_scope("mor_tags"):
             # shape = (batch size, max length of sentence, mor_tag_size)
             mor_tag_embeddings = tf.one_hot(self.mor_tags, depth=42)
-        
+            
+        with tf.variable_scope("lex_tags"):
+            # shape = (batch size, max length of sentence, lexicon_tag_size)
+            lex_tag_embeddings = tf.one_hot(self.lex_tags, depth=6)
+            
+            
         with tf.variable_scope("chars"):
             if self.config.chars:
                 # get embeddings matrix
@@ -190,7 +199,7 @@ class CnnLstmCrfModel(object):
                 # shape = (batch size, max length of sentence, cnn hidden size)
                 output = tf.reshape(output, shape=[-1, s[1], int(output.shape[1])])
                 
-                word_embeddings = tf.concat([word_embeddings, mor_tag_embeddings, output], axis=-1)
+                word_embeddings = tf.concat([word_embeddings,  mor_tag_embeddings, lex_tag_embeddings,output], axis=-1)
         
         self.word_embeddings = tf.nn.dropout(word_embeddings, self.dropout)
     
@@ -287,7 +296,7 @@ class CnnLstmCrfModel(object):
         self.add_train_op()
         self.add_init_op()
     
-    def predict_batch(self, sess, words, mor_tags):
+    def predict_batch(self, sess, words, mor_tags, lex_tags):
         """
         Args:
             sess: a tensorflow session
@@ -297,7 +306,7 @@ class CnnLstmCrfModel(object):
             sequence_length
         """
         # get the feed dictionnary
-        fd, sequence_lengths = self.get_feed_dict(words, mor_tags, dropout=1.0)
+        fd, sequence_lengths = self.get_feed_dict(words, mor_tags, lex_tags, dropout=1.0)
         
         if self.config.crf:
             viterbi_sequences = []
@@ -331,8 +340,8 @@ class CnnLstmCrfModel(object):
         """
         nbatches = (len(train) + self.config.batch_size - 1) // self.config.batch_size
         prog = Progbar(target=nbatches)
-        for i, (words, mor_tags, labels) in enumerate(minibatches(train, self.config.batch_size)):
-            fd, _ = self.get_feed_dict(words, mor_tags, labels, self.config.lr, self.config.dropout)
+        for i, (words, mor_tags, lex_tags, labels) in enumerate(minibatches(train, self.config.batch_size)):
+            fd, _ = self.get_feed_dict(words, mor_tags, lex_tags, labels, self.config.lr, self.config.dropout)
             
             _, train_loss, summary = sess.run([self.train_op, self.loss, self.merged], feed_dict=fd)
             
@@ -360,8 +369,8 @@ class CnnLstmCrfModel(object):
         accs = []
         correct_preds, total_correct, total_preds = 0., 0., 0.
         
-        for words, mor_tags, labels in minibatches(test, self.config.batch_size):
-            labels_pred, sequence_lengths = self.predict_batch(sess, words, mor_tags)
+        for words, mor_tags, lex_tags, labels in minibatches(test, self.config.batch_size):
+            labels_pred, sequence_lengths = self.predict_batch(sess, words, mor_tags, lex_tags)
             
             for lab, lab_pred, length in zip(labels, labels_pred, sequence_lengths):
                 lab = lab[:length]

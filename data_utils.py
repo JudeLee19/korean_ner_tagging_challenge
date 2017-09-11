@@ -1,6 +1,6 @@
 import numpy as np
 import os
-
+import joblib
 
 # shared global variables to be imported from model also
 UNK = "$UNK$"
@@ -23,7 +23,7 @@ trimm your word vectors.
 
 
 class Data(object):
-    def __init__(self, filename, processing_word=None, processing_mor_tag=None, processing_tag=None,
+    def __init__(self, filename, processing_word=None, processing_mor_tag=None, processing_lex_tag=None,processing_tag=None,
                  max_iter=None):
         """
         Args:
@@ -35,15 +35,17 @@ class Data(object):
         self.filename = filename
         self.processing_word = processing_word
         self.processing_mor_tag = processing_mor_tag
+        self.processing_lex_tag = processing_lex_tag
         self.processing_tag = processing_tag
         self.max_iter = max_iter
         self.length = None
-
+        self.lex_dict = joblib.load('./data/gazette/lex_dict')
+        
     def __iter__(self):
         niter = 0
         # python 3
         with open(self.filename, encoding='utf-8') as f:
-            words, mor_tags, tags = [], [], []
+            words, mor_tags, lex_tags, tags = [], [], [], []
             for line in f:
                 line = line.strip()
                 if len(line) == 0:
@@ -51,11 +53,25 @@ class Data(object):
                         niter += 1
                         if self.max_iter is not None and niter > self.max_iter:
                             break
-                        yield words, mor_tags, tags
-                        words, mor_tags, tags = [], [], []
+                        yield words, mor_tags, lex_tags, tags
+                        words, mor_tags, lex_tags, tags = [], [], [], []
                 else:
                     ls = line.split(' ')
                     word, mor_tag, tag = ls[0], ls[-2], ls[-1]
+                    
+                    if word in self.lex_dict:
+                        lex_tag = self.lex_dict[word]
+                        lex_all_tags = []
+                        if ',' in lex_tag:
+                            for each_lex_tag in lex_tag.split(','):
+                                lex_all_tags += [self.processing_lex_tag(each_lex_tag)]
+                                break
+                        else:
+                            lex_all_tags += [self.processing_lex_tag(lex_tag)]
+                        lex_tags += lex_all_tags
+                    else:
+                        lex_tags += [self.processing_lex_tag(word)]
+
                     if self.processing_word is not None:
                         word = self.processing_word(word)
                     if self.processing_mor_tag is not None:
@@ -305,20 +321,21 @@ def minibatches(data, minibatch_size):
     Returns:
         list of tuples
     """
-    x_batch, t_batch, y_batch = [], [], []
-    for (x, t, y) in data:
+    x_batch, t_batch, l_batch, y_batch = [], [], [], []
+    for (x, t, l, y) in data:
         if len(x_batch) == minibatch_size:
-            yield x_batch, t_batch, y_batch
-            x_batch, t_batch, y_batch = [], [], []
+            yield x_batch, t_batch, l_batch, y_batch
+            x_batch, t_batch, l_batch, y_batch = [], [], [], []
 
         if type(x[0]) == tuple:
             x = zip(*x)
         x_batch += [x]
         t_batch += [t]
+        l_batch += [l]
         y_batch += [y]
 
     if len(x_batch) != 0:
-        yield x_batch, t_batch, y_batch
+        yield x_batch, t_batch, l_batch, y_batch
 
 
 def get_chunk_type(tok, idx_to_tag):
