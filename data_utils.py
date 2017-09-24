@@ -7,6 +7,18 @@ UNK = "$UNK$"
 NUM = "$NUM$"
 NONE = "O"
 
+import re
+
+BASE_CODE, CHOSUNG, JUNGSUNG = 44032, 588, 28
+
+CHOSUNG_LIST = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
+
+JUNGSUNG_LIST = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ',
+                 'ㅣ']
+
+JONGSUNG_LIST = [' ', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ',
+                 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
+
 
 # special error message
 class MyIOError(Exception):
@@ -23,7 +35,7 @@ trimm your word vectors.
 
 
 class Data(object):
-    def __init__(self, filename, processing_word=None, processing_mor_tag=None, processing_lex_tag=None,processing_tag=None,
+    def __init__(self, filename, processing_word=None, processing_mor_tag=None, processing_lex_tag=None, processing_tag=None,
                  max_iter=None):
         """
         Args:
@@ -59,18 +71,17 @@ class Data(object):
                     ls = line.split(' ')
                     word, mor_tag, tag = ls[0], ls[-2], ls[-1]
                     
-                    if word in self.lex_dict:
-                        lex_tag = self.lex_dict[word]
-                        lex_all_tags = []
-                        if ',' in lex_tag:
-                            for each_lex_tag in lex_tag.split(','):
-                                lex_all_tags += [self.processing_lex_tag(each_lex_tag)]
-                                break
+                    if self.processing_lex_tag is not None:
+                        if word in self.lex_dict:
+                            lex_tag = self.lex_dict[word]
+                            if ',' in lex_tag:
+                                one_lexs_str = str(self.processing_lex_tag(lex_tag.split(',')[0]))
+                                two_lexs_str = str(self.processing_lex_tag(lex_tag.split(',')[1]))
+                                lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                            else:
+                                lex_tags += [self.processing_lex_tag(lex_tag)]
                         else:
-                            lex_all_tags += [self.processing_lex_tag(lex_tag)]
-                        lex_tags += lex_all_tags
-                    else:
-                        lex_tags += [self.processing_lex_tag(word)]
+                            lex_tags += [self.processing_lex_tag(word)]
 
                     if self.processing_word is not None:
                         word = self.processing_word(word)
@@ -106,7 +117,7 @@ def get_vocabs(datasets):
     vocab_mor_tags = set()
     vocab_tags = set()
     for dataset in datasets:
-        for words, mor_tags, tags in dataset:
+        for words, mor_tags, lex_tags, tags in dataset:
             vocab_words.update(words)
             vocab_mor_tags.update(mor_tags)
             vocab_tags.update(tags)
@@ -122,10 +133,48 @@ def get_char_vocab(dataset):
         a set of all the characters in the dataset
     """
     vocab_char = set()
-    for words, __, _ in dataset:
+    for words, __, ___, _ in dataset:
         for word in words:
             vocab_char.update(word)
 
+    return vocab_char
+
+
+def split_char(char_input):
+    split_keyword_list = list(char_input)
+    result = list()
+    for keyword in split_keyword_list:
+        # 한글 여부 check 후 분리
+        if re.match('.*[ㄱ-ㅎㅏ-ㅣ가-힣]+.*', keyword) is not None:
+            char_code = ord(keyword) - BASE_CODE
+            char1 = int(char_code / CHOSUNG)
+            result.append(CHOSUNG_LIST[char1])
+            char2 = int((char_code - (CHOSUNG * char1)) / JUNGSUNG)
+            result.append(JUNGSUNG_LIST[char2])
+            char3 = int((char_code - (CHOSUNG * char1) - (JUNGSUNG * char2)))
+            result.append(JONGSUNG_LIST[char3])
+        else:
+            result.append(keyword)
+    result_split_char = "".join(result)
+    return result_split_char
+
+
+def get_char_con_vow_vocab(dataset):
+    """
+        Args:
+            dataset: a iterator yielding tuples (sentence, tags)
+        Returns:
+            a set of all the characters in the dataset
+        """
+    vocab_char = set()
+    for words, __, ___, _ in dataset:
+        for word in words:
+            try:
+                result_split_char = split_char(word)
+                vocab_char.update(result_split_char.rstrip())
+            except Exception as e:
+                continue
+    
     return vocab_char
 
 
@@ -236,6 +285,14 @@ def get_processing_word(vocab_words=None, vocab_chars=None,
         # 0. get chars of words
         if vocab_chars is not None and chars == True:
             char_ids = []
+            # for char in word:
+            #     try:
+            #         result_split_char = split_char(char)
+            #         for each_split_char in result_split_char:
+            #             if each_split_char in vocab_chars:
+            #                 char_ids += [vocab_chars[each_split_char]]
+            #     except:
+            #         char_ids += [vocab_chars[char]]
             for char in word:
                 # ignore chars out of vocabulary
                 if char in vocab_chars:

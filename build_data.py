@@ -1,7 +1,7 @@
 from config import Config
 from data_utils import Data, get_vocabs, UNK, NUM, \
     get_glove_vocab, write_vocab, load_vocab, get_char_vocab, \
-    export_trimmed_glove_vectors, get_processing_word
+    export_trimmed_glove_vectors, get_processing_word, get_char_con_vow_vocab
 
 
 def build_data(config):
@@ -29,6 +29,8 @@ def build_data(config):
     vocab.add(UNK)
     vocab.add(NUM)
 
+    vocab_mor_tags.add(UNK)
+    
     # Save vocab
     write_vocab(vocab, config.words_filename)
     write_vocab(vocab_mor_tags, config.mor_tags_filename)
@@ -41,6 +43,8 @@ def build_data(config):
 
     # Build and save char vocab
     train = Data(config.train_filename)
+    
+    # should change this ~!!
     vocab_chars = get_char_vocab(train)
     write_vocab(vocab_chars, config.chars_filename)
 

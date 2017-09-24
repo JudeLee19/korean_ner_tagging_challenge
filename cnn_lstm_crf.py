@@ -5,6 +5,12 @@ import tensorflow as tf
 from data_utils import minibatches, pad_sequences, get_chunks
 from general_utils import Progbar
 import subprocess
+import joblib
+import re
+
+UNK = "$UNK$"
+NUM = "$NUM$"
+NONE = "O"
 
 
 class CnnLstmCrfModel(object):
@@ -27,6 +33,8 @@ class CnnLstmCrfModel(object):
         self.num_filters = 128
         self.l2_reg_lambda = 0.0
         self.cnn_word_lengths = 15
+
+        self.lex_dict = joblib.load('./data/gazette/lex_dict')
         
     def add_placeholders(self):
         """
@@ -53,8 +61,8 @@ class CnnLstmCrfModel(object):
         self.mor_tags = tf.placeholder(tf.int32, shape=[None, None],
                                      name="mor_tags")
 
-        # shape = (batch size, max length of sentence in batch)
-        self.lex_tags = tf.placeholder(tf.int32, shape=[None, None],
+        # shape = (batch size, max length of sentence in batch, lexicon_tag_size)
+        self.lex_tags = tf.placeholder(tf.float32, shape=[None, None, 6],
                                        name="lexicon_tags")
         
         # shape = (batch size, max length of sentence in batch)
@@ -100,7 +108,24 @@ class CnnLstmCrfModel(object):
         
         if lex_tags is not None:
             lex_tags, _ = pad_sequences(lex_tags, 0)
-            feed[self.lex_tags] = lex_tags
+            # add two hot code here
+            batch_arr = []
+            for b_i, sentence in enumerate(lex_tags):
+                sentence_arr = []
+                for w_i, each_word_lex in enumerate(sentence):
+        
+                    word_lex_hot = list([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        
+                    if isinstance(each_word_lex, str) and ',' in each_word_lex:
+                        for word in each_word_lex.split(','):
+                            word_idx = int(word)
+                            word_lex_hot[word_idx] = 1.0
+                    else:
+                        word_lex_hot[each_word_lex] = 1.0
+        
+                    sentence_arr.append(word_lex_hot)
+                batch_arr.append(sentence_arr)
+            feed[self.lex_tags] = batch_arr
         
         if mor_tags is not None:
             mor_tags, _ = pad_sequences(mor_tags, 0)
@@ -133,8 +158,7 @@ class CnnLstmCrfModel(object):
             
         with tf.variable_scope("lex_tags"):
             # shape = (batch size, max length of sentence, lexicon_tag_size)
-            lex_tag_embeddings = tf.one_hot(self.lex_tags, depth=6)
-            
+            lex_tag_embeddings = self.lex_tags
             
         with tf.variable_scope("chars"):
             if self.config.chars:
@@ -320,12 +344,10 @@ class CnnLstmCrfModel(object):
                 viterbi_sequence, viterbi_score = tf.contrib.crf.viterbi_decode(
                     logit, transition_params)
                 viterbi_sequences += [viterbi_sequence]
-            
             return viterbi_sequences, sequence_lengths
         
         else:
             labels_pred = sess.run(self.labels_pred, feed_dict=fd)
-            
             return labels_pred, sequence_lengths
     
     def run_epoch(self, sess, train, dev, tags, epoch):
@@ -340,6 +362,7 @@ class CnnLstmCrfModel(object):
         """
         nbatches = (len(train) + self.config.batch_size - 1) // self.config.batch_size
         prog = Progbar(target=nbatches)
+        
         for i, (words, mor_tags, lex_tags, labels) in enumerate(minibatches(train, self.config.batch_size)):
             fd, _ = self.get_feed_dict(words, mor_tags, lex_tags, labels, self.config.lr, self.config.dropout)
             
@@ -443,23 +466,28 @@ class CnnLstmCrfModel(object):
     
     def get_mor_result(self, sentence):
         # korea univ morpheme analyzer
-        m_command = 'cd data/kmat/bin/;./kmat <<<\"' + sentence + '\" 2>/dev/null'
+        m_command = "cd data/kmat/bin/;./kmat <<<\'" + sentence + "\' 2>/dev/null"
         result = subprocess.check_output(m_command.encode(encoding='cp949', errors='ignore'), shell=True,
-                                         executable='/bin/bash', )
-        mor_lists = []
+                                         executable='/bin/bash')
+
+        mor_name_lists = []
+        mor_tags_lists = []
+
         for each in result.decode(encoding='cp949', errors='ignore').split('\n'):
             if len(each) > 0:
                 try:
-                    mor_text = each.split('\t')[1]
+                    mor_texts = each.split('\t')[1]
                 except:
                     print(each)
-                mor_results = mor_text.split('+')
-                
+                mor_results = mor_texts.split('+')
+        
                 for each_mor in mor_results:
-                    mor_lists.append(each_mor.split('/')[0])
-        return mor_lists
+                    mor_name_lists.append(each_mor.split('/')[0])
+                    mor_tags_lists.append(each_mor.split('/')[1])
     
-    def interactive_shell(self, tags, processing_word):
+        return mor_name_lists, mor_tags_lists
+    
+    def interactive_shell(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
         
         idx_to_tag = {idx: tag for tag, idx in tags.items()}
         saver = tf.train.Saver()
@@ -478,9 +506,25 @@ class CnnLstmCrfModel(object):
                     except NameError:
                         # for python 3
                         sentence = input("input> ")
+
+                    # extract mor tags from sentence
+                    words_raw, words_mor_tags = self.get_mor_result(sentence)
                     
-                    words_raw = self.get_mor_result(sentence)
+                    lex_tags = []
+                    for word in words_raw:
+                        if word in self.lex_dict:
+                            lex_tag = self.lex_dict[word]
+                            if ',' in lex_tag:
+                                one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+                                two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+                                lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                            else:
+                                lex_tags += [processing_lex_tag(lex_tag)]
+                        else:
+                            lex_tags += [processing_lex_tag(word)]
+                    
                     words_raw = [w.strip() for w in words_raw]
+                    words_mor_tags = [w.strip() for w in words_mor_tags]
                     
                     if words_raw == ["exit"]:
                         break
@@ -488,14 +532,173 @@ class CnnLstmCrfModel(object):
                     words = [processing_word(w) for w in words_raw]
                     if type(words[0]) == tuple:
                         words = zip(*words)
-                    pred_ids, _ = self.predict_batch(sess, [words])
+                    
+                    mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+                    
+                    pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
                     preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
                     
                     print('-------------- Predict ----------')
                     for word, pred in zip(words_raw, preds):
                         print(word, pred)
-                        # print_sentence(self.logger, {"x": words_raw, "y": preds})
                 
                 except Exception as e:
                     print('Error : ', e)
                     pass
+
+    def get_ner_tag_result(self, sentence, tags, processing_word, processing_mor_tag, processing_lex_tag):
+        idx_to_tag = {idx: tag for tag, idx in tags.items()}
+        saver = tf.train.Saver()
+        with tf.Session() as sess:
+            saver.restore(sess, self.config.model_output)
+            # extract mor tags from sentence
+            words_raw, words_mor_tags = self.get_mor_result(sentence)
+
+            lex_tags = []
+            for word in words_raw:
+                if word in self.lex_dict:
+                    lex_tag = self.lex_dict[word]
+                    if ',' in lex_tag:
+                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                    else:
+                        lex_tags += [processing_lex_tag(lex_tag)]
+                else:
+                    lex_tags += [processing_lex_tag(word)]
+
+            words_raw = [w.strip() for w in words_raw]
+            words_mor_tags = [w.strip() for w in words_mor_tags]
+            words = [processing_word(w) for w in words_raw]
+            if type(words[0]) == tuple:
+                words = zip(*words)
+
+            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+
+            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
+            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+            
+            return words_raw, preds
+
+    def find_more_than_one_word(self, sentence, search):
+        result = re.findall('\\b' + search + '\\b', sentence, flags=re.IGNORECASE)
+        
+        if len(result) > 1:
+            return True
+        else:
+            return False
+    
+    def write_tag_result(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
+        test_file_name = './data/test_data/test_file'
+        tag_result_file_name = './data/test_data/tag_result_file'
+
+        idx_to_tag = {idx: tag for tag, idx in tags.items()}
+        saver = tf.train.Saver()
+        with tf.Session() as sess:
+            saver.restore(sess, self.config.model_output)
+            with open(tag_result_file_name, 'w', encoding='utf-8') as f_w:
+                with open(test_file_name, 'r', encoding='utf-8') as f_r:
+                    for line in f_r:
+                        line = line.rstrip()
+                        if len(line) < 1:
+                            continue
+                        if line.startswith(';'):
+                            raw_line = line
+                            sentence = line.split(';')[1].strip()
+                            sentence = sentence.replace("'", "")
+
+                            # extract mor tags from sentence
+                            words_raw, words_mor_tags = self.get_mor_result(sentence)
+                            
+                            lex_tags = []
+                            for word in words_raw:
+                                if word in self.lex_dict:
+                                    lex_tag = self.lex_dict[word]
+                                    if ',' in lex_tag:
+                                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+                                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+                                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                                    else:
+                                        lex_tags += [processing_lex_tag(lex_tag)]
+                                else:
+                                    lex_tags += [processing_lex_tag(word)]
+
+                            words_raw = [w.strip() for w in words_raw]
+                            words_mor_tags = [w.strip() for w in words_mor_tags]
+                            
+                            words = [processing_word(w) for w in words_raw]
+                            if type(words[0]) == tuple:
+                                words = zip(*words)
+
+                            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+
+                            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
+                            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+                            
+                            f_w.write('%s\n' % (raw_line))
+                            exist_tag_idx_list = [i for i, x in enumerate(preds) if x != 'O']
+
+                            pred_word_list = []
+                            pred_tag_list = []
+                            
+                            prev_word = ''
+                            prev_pred = ''
+                            dt_count = 0
+                            for idx in exist_tag_idx_list:
+                                current_pred = preds[idx]
+                                current_pred = current_pred.replace('B_', '')
+                                current_word = words_raw[idx]
+                                if current_pred != 'I':
+                                    if prev_word != '':
+                                        #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
+                                        if dt_count < 4 and prev_pred == 'DT':
+                                            prev_word = prev_word.replace(' ', '')
+                                        
+                                        pred_word_list.append(prev_word)
+                                        pred_tag_list.append(prev_pred)
+                                        dt_count = 0
+                                    prev_word = current_word
+                                    prev_pred = current_pred
+                                else:
+                                    if prev_pred == 'OG':
+                                        prev_word = prev_word + current_word
+                                    elif prev_pred != 'DT' and prev_pred != 'OG':
+                                        # PS, LC, TI
+                                        dt_count = 0
+                                        prev_word = prev_word + ' ' + current_word
+                                    else:
+                                        # in case of date time
+                                        dt_count += 1
+                                        if dt_count == 2:
+                                            prev_word = prev_word + ' ' + current_word
+                                        else:
+                                            prev_word = prev_word + current_word
+                                        
+                            if prev_word != '':
+                                #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
+                                if dt_count < 4 and prev_pred == 'DT':
+                                    prev_word = prev_word.replace(' ', '')
+                                
+                                pred_word_list.append(prev_word)
+                                pred_tag_list.append(prev_pred)
+
+                            raw_line = raw_line.replace('; ', '$')
+                            
+                            exist_word_dict = {}
+                            for word, pred in zip(pred_word_list, pred_tag_list):
+                                if word in exist_word_dict:
+                                    continue
+                                if self.find_more_than_one_word(raw_line, word):
+                                    exist_word_dict[word] = 0
+                                #raw_line = re.sub('\\b' + word + '\\b', '<' + word + ':' + pred + '>', raw_line)
+                                
+                                raw_line = raw_line.replace(word, '<' + word + ':' + pred + '>')
+                            f_w.write('%s\n' % (raw_line))
+                            
+                            for word, pred in zip(pred_word_list, pred_tag_list):
+                                if word in exist_word_dict:
+                                    if exist_word_dict[word] > 0:
+                                        continue
+                                    exist_word_dict[word] += 1
+                                f_w.write('%s\t%s\n' % (word, pred))
+                            f_w.write('\n')
