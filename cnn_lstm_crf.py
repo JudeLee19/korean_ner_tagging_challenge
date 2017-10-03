@@ -7,6 +7,7 @@ from general_utils import Progbar
 import subprocess
 import joblib
 import re
+from collections import OrderedDict
 
 UNK = "$UNK$"
 NUM = "$NUM$"
@@ -122,7 +123,6 @@ class CnnLstmCrfModel(object):
                             word_lex_hot[word_idx] = 1.0
                     else:
                         word_lex_hot[each_word_lex] = 1.0
-        
                     sentence_arr.append(word_lex_hot)
                 batch_arr.append(sentence_arr)
             feed[self.lex_tags] = batch_arr
@@ -482,10 +482,59 @@ class CnnLstmCrfModel(object):
                 mor_results = mor_texts.split('+')
         
                 for each_mor in mor_results:
-                    mor_name_lists.append(each_mor.split('/')[0])
-                    mor_tags_lists.append(each_mor.split('/')[1])
+                    try:
+                        mor_name_lists.append(each_mor.split('/')[0])
+                        mor_tags_lists.append(each_mor.split('/')[1])
+                    except:
+                        mor_name_lists.append(each_mor.split('/')[0])
+                        mor_tags_lists.append('SS')
     
         return mor_name_lists, mor_tags_lists
+
+    def get_mor_result_v2(self, sentence):
+        # korea univ morpheme analyzer
+        # dict 에 두번 들어가는 경우.
+        # 문장에 + 들어가는 경우도 처리해줘야 함.
+        # 문장에 '' < 있는 경우도 처리해 줘야함.
+        m_command = "cd data/kmat/bin/;./kmat <<<\'" + sentence + "\' 2>/dev/null"
+        result = subprocess.check_output(m_command.encode(encoding='cp949', errors='ignore'), shell=True,
+                                         executable='/bin/bash')
+    
+        mor_name_lists = []
+        mor_tags_lists = []
+        mor_dict = OrderedDict()
+
+        count = 0
+        for each in result.decode(encoding='cp949', errors='ignore').split('\n'):
+            if len(each) > 0:
+                try:
+                    ori_text = each.split('\t')[0]
+                    mor_texts = each.split('\t')[1]
+                    mor_results = mor_texts.split('+')
+
+                    count += 1
+
+                    dict_key = ori_text
+                    if dict_key in mor_dict:
+                        dict_key = dict_key + '||' + str(count)
+                    mor_dict[dict_key] = []
+                    for each_mor in mor_results:
+                        try:
+                            mor_name_lists.append(each_mor.split('/')[0])
+                            mor_tags_lists.append(each_mor.split('/')[1])
+                            each_mor_dict = {}
+                            each_mor_dict[each_mor.split('/')[0]] = []
+                            
+                            mor_dict[dict_key].append(each_mor_dict)
+                        except Exception as e:
+                            print(e)
+                            print(each_mor)
+                except:
+                    print(each)
+        
+                
+    
+        return mor_name_lists, mor_tags_lists, mor_dict
     
     def interactive_shell(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
         
@@ -581,124 +630,252 @@ class CnnLstmCrfModel(object):
             return words_raw, preds
 
     def find_more_than_one_word(self, sentence, search):
-        result = re.findall('\\b' + search + '\\b', sentence, flags=re.IGNORECASE)
-        
-        if len(result) > 1:
-            return True
-        else:
+        # print(sentence)
+        try:
+            # result = re.findall('\\b' + search + '\\b', sentence, flags=re.IGNORECASE)
+            result = re.findall(search, sentence, flags=re.IGNORECASE)
+            # print(search, len(result))
+            if len(result) > 1:
+                return True
+            else:
+                return False
+        except Exception as e:
+            print('find more error')
+            print(e)
+            print(sentence, search)
             return False
     
-    def write_tag_result(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
-        test_file_name = './data/test_data/test_file'
-        tag_result_file_name = './data/test_data/tag_result_file'
-
+    def write_tag_result_test(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
+        sentence = '5일 서울시의 ‘2016년 서울시민 교통카드 빅데이터 분석 결과’에 따르면 지난 한 해 동안 총 49억4000만명, 하루 평균 1349만1000명이 서울 지하철과 버스를 이용했다.'
+        #sentence = '서한에는 아마존, 구글 등 다국적 IT·인터넷기업이 유럽에서 거두는 실질적인 수익에 따른 세금을 내야 한다는 내용이 담겼다.'
+        sentence = '이 같은 성장은 동북아시아 지역의 성장세 +9% 강화와 신흥시장 구매력 증가, 항공연결 증가, 여행비용 부담 완화 및 비자 개선 등의 영향으로 분석된다.'
+        
+        if "'" in sentence:
+            sentence = sentence.replace("'", "")
+        if "+" in sentence:
+            sentence = sentence.replace('+', '*')
+        
+        
         idx_to_tag = {idx: tag for tag, idx in tags.items()}
         saver = tf.train.Saver()
         with tf.Session() as sess:
             saver.restore(sess, self.config.model_output)
-            with open(tag_result_file_name, 'w', encoding='utf-8') as f_w:
-                with open(test_file_name, 'r', encoding='utf-8') as f_r:
-                    for line in f_r:
-                        line = line.rstrip()
-                        if len(line) < 1:
-                            continue
-                        if line.startswith(';'):
-                            raw_line = line
-                            sentence = line.split(';')[1].strip()
-                            sentence = sentence.replace("'", "")
+            # extract mor tags from sentence
+            words_raw, words_mor_tags, mor_dict = self.get_mor_result_v2(sentence)
+            
+            lex_tags = []
+            for word in words_raw:
+                if word in self.lex_dict:
+                    lex_tag = self.lex_dict[word]
+                    if ',' in lex_tag:
+                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                    else:
+                        lex_tags += [processing_lex_tag(lex_tag)]
+                else:
+                    lex_tags += [processing_lex_tag(word)]
+        
+            words_raw = [w.strip() for w in words_raw]
+            words_mor_tags = [w.strip() for w in words_mor_tags]
+        
+            words = [processing_word(w) for w in words_raw]
+            if type(words[0]) == tuple:
+                words = zip(*words)
+        
+            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+        
+            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
+            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+            
+            
+            key_count = 0
+            for each_lists in mor_dict.values():
+                for each_list in each_lists:
+                    if words_raw[key_count] == list(each_list.keys())[0]:
+                        each_list[list(each_list.keys())[0]] = preds[key_count]
+                        key_count += 1
+            
+            tagging_result = mor_dict
+            print(tagging_result)
+    
+            # each_key => 어절
+            flag = 0
 
-                            # extract mor tags from sentence
-                            words_raw, words_mor_tags = self.get_mor_result(sentence)
-                            
-                            lex_tags = []
-                            for word in words_raw:
-                                if word in self.lex_dict:
-                                    lex_tag = self.lex_dict[word]
-                                    if ',' in lex_tag:
-                                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
-                                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
-                                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
-                                    else:
-                                        lex_tags += [processing_lex_tag(lex_tag)]
-                                else:
-                                    lex_tags += [processing_lex_tag(word)]
+            total_count = 0
 
-                            words_raw = [w.strip() for w in words_raw]
-                            words_mor_tags = [w.strip() for w in words_mor_tags]
-                            
-                            words = [processing_word(w) for w in words_raw]
-                            if type(words[0]) == tuple:
-                                words = zip(*words)
+            issue_list = []
 
-                            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
-
-                            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
-                            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
-                            
-                            f_w.write('%s\n' % (raw_line))
-                            exist_tag_idx_list = [i for i, x in enumerate(preds) if x != 'O']
-
-                            pred_word_list = []
-                            pred_tag_list = []
-                            
-                            prev_word = ''
-                            prev_pred = ''
-                            dt_count = 0
-                            for idx in exist_tag_idx_list:
-                                current_pred = preds[idx]
-                                current_pred = current_pred.replace('B_', '')
-                                current_word = words_raw[idx]
-                                if current_pred != 'I':
-                                    if prev_word != '':
-                                        #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
-                                        if dt_count < 4 and prev_pred == 'DT':
-                                            prev_word = prev_word.replace(' ', '')
-                                        
-                                        pred_word_list.append(prev_word)
-                                        pred_tag_list.append(prev_pred)
-                                        dt_count = 0
-                                    prev_word = current_word
-                                    prev_pred = current_pred
-                                else:
-                                    if prev_pred == 'OG':
-                                        prev_word = prev_word + current_word
-                                    elif prev_pred != 'DT' and prev_pred != 'OG':
-                                        # PS, LC, TI
-                                        dt_count = 0
-                                        prev_word = prev_word + ' ' + current_word
-                                    else:
-                                        # in case of date time
-                                        dt_count += 1
-                                        if dt_count == 2:
-                                            prev_word = prev_word + ' ' + current_word
-                                        else:
-                                            prev_word = prev_word + current_word
-                                        
-                            if prev_word != '':
-                                #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
-                                if dt_count < 4 and prev_pred == 'DT':
-                                    prev_word = prev_word.replace(' ', '')
-                                
-                                pred_word_list.append(prev_word)
-                                pred_tag_list.append(prev_pred)
-
-                            raw_line = raw_line.replace('; ', '$')
-                            
-                            exist_word_dict = {}
-                            for word, pred in zip(pred_word_list, pred_tag_list):
-                                if word in exist_word_dict:
-                                    continue
-                                if self.find_more_than_one_word(raw_line, word):
-                                    exist_word_dict[word] = 0
-                                #raw_line = re.sub('\\b' + word + '\\b', '<' + word + ':' + pred + '>', raw_line)
-                                
-                                raw_line = raw_line.replace(word, '<' + word + ':' + pred + '>')
-                            f_w.write('%s\n' % (raw_line))
-                            
-                            for word, pred in zip(pred_word_list, pred_tag_list):
-                                if word in exist_word_dict:
-                                    if exist_word_dict[word] > 0:
-                                        continue
-                                    exist_word_dict[word] += 1
-                                f_w.write('%s\t%s\n' % (word, pred))
-                            f_w.write('\n')
+            repre_tag = ''
+            for each_key in tagging_result.keys():
+                each_key = each_key.strip()
+                
+                    
+                # print(each_key, len(each_key))
+                # 각 어절 안에서의 형태소 단위
+                for each_p_dict in tagging_result[each_key]:
+                    if '||' in each_key:
+                        each_key = each_key.split('||')[0]
+                    if '*' in each_key:
+                        each_key = each_key.replace('*', '+')
+                        
+                    current_p_word = list(each_p_dict.keys())[0]
+                    current_p_pred = each_p_dict[current_p_word]
+        
+                    if flag == 1 and current_p_pred.startswith('B_'):
+                        # B 연속일때 < > 둘다 넣음.
+                        find_idx = each_key.find(current_p_word)
+                        if find_idx == 0:
+                            issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
+                        else:
+                            issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
+            
+                        issue_list.append((total_count + find_idx, '<'))
+                        repre_tag = current_p_pred
+        
+                    elif current_p_pred.startswith('B_'):
+                        find_idx = each_key.find(current_p_word)
+                        if find_idx == -1:
+                            find_idx = each_key.find(each_key)
+                        flag = 1
+                        issue_list.append((total_count + find_idx, '<'))
+                        repre_tag = current_p_pred
+                    elif current_p_pred == 'O':
+                        if flag == 1:
+                            find_idx = each_key.find(current_p_word)
+                
+                            if find_idx == 0:
+                                issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
+                            else:
+                                issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
+                            flag = 0
+    
+                total_count += (len(each_key) + 1)
+            
+            result = ''
+            for i in range(len(sentence)):
+                for each_issue in issue_list:
+                    if i == each_issue[0]:
+                        result += each_issue[1]
+                result += sentence[i]
+            print(result)
+            
+            return sentence, tagging_result, result
+    
+    # def write_tag_result(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
+    #     test_file_name = './data/test_data/test.txt'
+    #     tag_result_file_name = './data/test_data/2017_tag_result_file_v2_tail_v3'
+    #
+    #     test_file_name = './data/test_data/2017_test'
+    #     tag_result_file_name = './data/test_data/2017_test_result'
+    #
+    #     idx_to_tag = {idx: tag for tag, idx in tags.items()}
+    #     saver = tf.train.Saver()
+    #     with tf.Session() as sess:
+    #         saver.restore(sess, self.config.model_output)
+    #         with open(tag_result_file_name, 'w', encoding='utf-8') as f_w:
+    #             with open(test_file_name, 'r', encoding='utf-8') as f_r:
+    #                 for line in f_r:
+    #                     line = line.rstrip()
+    #                     if len(line) < 1:
+    #                         continue
+    #                     if line.startswith(';'):
+    #                         raw_line = line
+    #                         sentence = line.split(';')[1].strip()
+    #                         sentence = sentence.replace("'", "")
+    #
+    #                         # extract mor tags from sentence
+    #                         words_raw, words_mor_tags = self.get_mor_result(sentence)
+    #
+    #                         lex_tags = []
+    #                         for word in words_raw:
+    #                             if word in self.lex_dict:
+    #                                 lex_tag = self.lex_dict[word]
+    #                                 if ',' in lex_tag:
+    #                                     one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+    #                                     two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+    #                                     lex_tags += [one_lexs_str + ',' + two_lexs_str]
+    #                                 else:
+    #                                     lex_tags += [processing_lex_tag(lex_tag)]
+    #                             else:
+    #                                 lex_tags += [processing_lex_tag(word)]
+    #
+    #                         words_raw = [w.strip() for w in words_raw]
+    #                         words_mor_tags = [w.strip() for w in words_mor_tags]
+    #
+    #                         words = [processing_word(w) for w in words_raw]
+    #                         if type(words[0]) == tuple:
+    #                             words = zip(*words)
+    #
+    #                         mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+    #
+    #                         pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
+    #                         preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+    #
+    #                         f_w.write('%s\n' % (raw_line))
+    #                         exist_tag_idx_list = [i for i, x in enumerate(preds) if x != 'O']
+    #
+    #                         pred_word_list = []
+    #                         pred_tag_list = []
+    #
+    #                         prev_word = ''
+    #                         prev_pred = ''
+    #                         dt_count = 0
+    #                         for idx in exist_tag_idx_list:
+    #                             current_pred = preds[idx]
+    #                             current_pred = current_pred.replace('B_', '')
+    #                             current_word = words_raw[idx]
+    #                             if current_pred != 'I':
+    #                                 if prev_word != '':
+    #                                     #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
+    #                                     if dt_count < 4 and prev_pred == 'DT':
+    #                                         prev_word = prev_word.replace(' ', '')
+    #
+    #                                     pred_word_list.append(prev_word)
+    #                                     pred_tag_list.append(prev_pred)
+    #                                     dt_count = 0
+    #                                 prev_word = current_word
+    #                                 prev_pred = current_pred
+    #                             else:
+    #                                 if prev_pred == 'OG':
+    #                                     prev_word = prev_word + current_word
+    #                                 elif prev_pred != 'DT' and prev_pred != 'OG':
+    #                                     # PS, LC, TI
+    #                                     dt_count = 0
+    #                                     prev_word = prev_word + ' ' + current_word
+    #                                 else:
+    #                                     # in case of date time
+    #                                     dt_count += 1
+    #                                     if dt_count == 2:
+    #                                         prev_word = prev_word + ' ' + current_word
+    #                                     else:
+    #                                         prev_word = prev_word + current_word
+    #
+    #                         if prev_word != '':
+    #                             #f_w.write('%s\t%s\n' % (prev_word, prev_pred))
+    #                             if dt_count < 4 and prev_pred == 'DT':
+    #                                 prev_word = prev_word.replace(' ', '')
+    #
+    #                             pred_word_list.append(prev_word)
+    #                             pred_tag_list.append(prev_pred)
+    #
+    #                         raw_line = raw_line.replace('; ', '$')
+    #
+    #                         exist_word_dict = {}
+    #                         for word, pred in zip(pred_word_list, pred_tag_list):
+    #                             if word in exist_word_dict:
+    #                                 continue
+    #                             if self.find_more_than_one_word(raw_line, word):
+    #                                 # print('this', word)
+    #                                 exist_word_dict[word] = 0
+    #
+    #                             raw_line = raw_line.replace(word, '<' + word + ':' + pred + '>')
+    #                         f_w.write('%s\n' % (raw_line))
+    #
+    #                         for word, pred in zip(pred_word_list, pred_tag_list):
+    #                             if word in exist_word_dict:
+    #                                 if exist_word_dict[word] > 0:
+    #                                     continue
+    #                                 exist_word_dict[word] += 1
+    #                             f_w.write('%s\t%s\n' % (word, pred))
+    #                         f_w.write('\n')
