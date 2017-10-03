@@ -644,123 +644,142 @@ class CnnLstmCrfModel(object):
             print(e)
             print(sentence, search)
             return False
-    
+
+        
     def write_tag_result_test(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
-        sentence = '5일 서울시의 ‘2016년 서울시민 교통카드 빅데이터 분석 결과’에 따르면 지난 한 해 동안 총 49억4000만명, 하루 평균 1349만1000명이 서울 지하철과 버스를 이용했다.'
-        #sentence = '서한에는 아마존, 구글 등 다국적 IT·인터넷기업이 유럽에서 거두는 실질적인 수익에 따른 세금을 내야 한다는 내용이 담겼다.'
-        sentence = '이 같은 성장은 동북아시아 지역의 성장세 +9% 강화와 신흥시장 구매력 증가, 항공연결 증가, 여행비용 부담 완화 및 비자 개선 등의 영향으로 분석된다.'
-        
-        if "'" in sentence:
-            sentence = sentence.replace("'", "")
-        if "+" in sentence:
-            sentence = sentence.replace('+', '*')
-        
+    
+        test_file_name = './data/test_data/test_file.txt'
+        tag_result_file_name = './data/test_data/test_result_file_test'
         
         idx_to_tag = {idx: tag for tag, idx in tags.items()}
         saver = tf.train.Saver()
         with tf.Session() as sess:
             saver.restore(sess, self.config.model_output)
-            # extract mor tags from sentence
-            words_raw, words_mor_tags, mor_dict = self.get_mor_result_v2(sentence)
             
-            lex_tags = []
-            for word in words_raw:
-                if word in self.lex_dict:
-                    lex_tag = self.lex_dict[word]
-                    if ',' in lex_tag:
-                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
-                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
-                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
-                    else:
-                        lex_tags += [processing_lex_tag(lex_tag)]
-                else:
-                    lex_tags += [processing_lex_tag(word)]
-        
-            words_raw = [w.strip() for w in words_raw]
-            words_mor_tags = [w.strip() for w in words_mor_tags]
-        
-            words = [processing_word(w) for w in words_raw]
-            if type(words[0]) == tuple:
-                words = zip(*words)
-        
-            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
-        
-            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
-            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
-            
-            
-            key_count = 0
-            for each_lists in mor_dict.values():
-                for each_list in each_lists:
-                    if words_raw[key_count] == list(each_list.keys())[0]:
-                        each_list[list(each_list.keys())[0]] = preds[key_count]
-                        key_count += 1
-            
-            tagging_result = mor_dict
-            print(tagging_result)
-    
-            # each_key => 어절
-            flag = 0
-
-            total_count = 0
-
-            issue_list = []
-
-            repre_tag = ''
-            for each_key in tagging_result.keys():
-                each_key = each_key.strip()
-                
-                    
-                # print(each_key, len(each_key))
-                # 각 어절 안에서의 형태소 단위
-                for each_p_dict in tagging_result[each_key]:
-                    if '||' in each_key:
-                        each_key = each_key.split('||')[0]
-                    if '*' in each_key:
-                        each_key = each_key.replace('*', '+')
+            with open(tag_result_file_name, 'w', encoding='utf-8') as f_w:
+                with open(test_file_name, 'r', encoding='utf-8') as f_r:
+                    for line in f_r.readlines():
+                        line = line.strip()
+                        if len(line) < 1:
+                            continue
+                        if line.startswith(';'):
+                            raw_line = line
+                            sentence = line.split(';')[1].strip()
+                            if "'" in sentence:
+                                sentence = sentence.replace("'", "")
+                            if "+" in sentence:
+                                sentence = sentence.replace('+', '*')
+                            
+                            # extract mor tags from sentence
+                            words_raw, words_mor_tags, mor_dict = self.get_mor_result_v2(sentence)
+                            
+                            lex_tags = []
+                            for word in words_raw:
+                                if word in self.lex_dict:
+                                    lex_tag = self.lex_dict[word]
+                                    if ',' in lex_tag:
+                                        one_lexs_str = str(processing_lex_tag(lex_tag.split(',')[0]))
+                                        two_lexs_str = str(processing_lex_tag(lex_tag.split(',')[1]))
+                                        lex_tags += [one_lexs_str + ',' + two_lexs_str]
+                                    else:
+                                        lex_tags += [processing_lex_tag(lex_tag)]
+                                else:
+                                    lex_tags += [processing_lex_tag(word)]
                         
-                    current_p_word = list(each_p_dict.keys())[0]
-                    current_p_pred = each_p_dict[current_p_word]
-        
-                    if flag == 1 and current_p_pred.startswith('B_'):
-                        # B 연속일때 < > 둘다 넣음.
-                        find_idx = each_key.find(current_p_word)
-                        if find_idx == 0:
-                            issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
-                        else:
-                            issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
-            
-                        issue_list.append((total_count + find_idx, '<'))
-                        repre_tag = current_p_pred
-        
-                    elif current_p_pred.startswith('B_'):
-                        find_idx = each_key.find(current_p_word)
-                        if find_idx == -1:
-                            find_idx = each_key.find(each_key)
-                        flag = 1
-                        issue_list.append((total_count + find_idx, '<'))
-                        repre_tag = current_p_pred
-                    elif current_p_pred == 'O':
-                        if flag == 1:
-                            find_idx = each_key.find(current_p_word)
-                
-                            if find_idx == 0:
-                                issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
-                            else:
-                                issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
+                            words_raw = [w.strip() for w in words_raw]
+                            words_mor_tags = [w.strip() for w in words_mor_tags]
+                        
+                            words = [processing_word(w) for w in words_raw]
+                            if type(words[0]) == tuple:
+                                words = zip(*words)
+                        
+                            mor_tags = [processing_mor_tag(w) for w in words_mor_tags]
+                        
+                            pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
+                            preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+                            
+                            
+                            key_count = 0
+                            for each_lists in mor_dict.values():
+                                for each_list in each_lists:
+                                    if words_raw[key_count] == list(each_list.keys())[0]:
+                                        each_list[list(each_list.keys())[0]] = preds[key_count]
+                                        key_count += 1
+                            
+                            tagging_result = mor_dict
+                            #print(tagging_result)
+                    
+                            # each_key => 어절
                             flag = 0
-    
-                total_count += (len(each_key) + 1)
-            
-            result = ''
-            for i in range(len(sentence)):
-                for each_issue in issue_list:
-                    if i == each_issue[0]:
-                        result += each_issue[1]
-                result += sentence[i]
-            print(result)
-            
-            return sentence, tagging_result, result
+                
+                            total_count = 0
+                
+                            issue_list = []
+                
+                            repre_tag = ''
+                            for each_key in tagging_result.keys():
+                                each_key = each_key.strip()
+                                if '||' in each_key:
+                                    each_key = each_key.split('||')[0]
+                                    
+                                # 각 어절 안에서의 형태소 단위
+                                for each_p_dict in tagging_result[each_key]:
+                         
+                                    current_p_word = list(each_p_dict.keys())[0]
+                                    current_p_pred = each_p_dict[current_p_word]
+                        
+                                    if flag == 1 and current_p_pred.startswith('B_'):
+                                        # B 연속일때 < > 둘다 넣음.
+                                        find_idx = each_key.find(current_p_word)
+                                        if find_idx == 0:
+                                            issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
+                                        else:
+                                            issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
+                            
+                                        issue_list.append((total_count + find_idx, '<'))
+                                        repre_tag = current_p_pred
+                        
+                                    elif current_p_pred.startswith('B_'):
+                                        find_idx = each_key.find(current_p_word)
+                                        if find_idx == -1:
+                                            find_idx = each_key.find(each_key)
+                                        flag = 1
+                                        issue_list.append((total_count + find_idx, '<'))
+                                        repre_tag = current_p_pred
+                                    elif current_p_pred == 'O':
+                                        if flag == 1:
+                                            find_idx = each_key.find(current_p_word)
+                                
+                                            if find_idx == 0:
+                                                issue_list.append((total_count + find_idx - 1, str(':' + repre_tag + '>')))
+                                            else:
+                                                issue_list.append((total_count + find_idx, str(':' + repre_tag + '>')))
+                                            flag = 0
+                    
+                                total_count += (len(each_key) + 1)
+                            
+                            if '*' in sentence:
+                                sentence = sentence.replace('*', '+')
+                            result = ''
+                            for i in range(len(sentence)):
+                                for each_issue in issue_list:
+                                    if i == each_issue[0]:
+                                        result += each_issue[1]
+                                result += sentence[i]
+                            
+                            f_w.write('%s \n' % (raw_line))
+                            f_w.write('$%s \n' % (result))
+
+                            tag_pair_list = re.findall(r'<(.*?)>', result)
+                            try:
+                                for each_tag_pair in tag_pair_list:
+                                    word = each_tag_pair.split(':')[0]
+                                    tag = each_tag_pair.split(':')[1]
+                                    f_w.write('%s\t%s\n' % (word, tag))
+                            except Exception as tag_e:
+                                print(tag_pair_list)
+                                print(tag_e)
+                            f_w.write('\n')
     
     # def write_tag_result(self, tags, processing_word, processing_mor_tag, processing_lex_tag):
     #     test_file_name = './data/test_data/test.txt'
