@@ -1,0 +1,2 @@
+model_checkpoint_path: "model_fil_2345_600_100_128_drop_0.8_0924.weights"
+all_model_checkpoint_paths: "model_fil_2345_600_100_128_drop_0.8_0924.weights"
