@@ -717,6 +717,9 @@ class CnnLstmCrfModel(object):
     
         test_file_name = './data/test_data/test_file_test.txt'
         tag_result_file_name = './data/test_data/test_result_file_test_1009'
+
+        test_file_name = 'data/test_data/test_demo.txt'
+        tag_result_file_name = 'data/test_data/test_demo_result.txt'
         
         idx_to_tag = {idx: tag for tag, idx in tags.items()}
         saver = tf.train.Saver()
