@@ -560,12 +560,13 @@ class CnnLstmCrfModel(object):
                         continue
                     
                     if "'" in sentence:
-                        sentence = sentence.replace("'", "")
+                        sentence = sentence.replace("'", '"')
                     if "+" in sentence:
                         sentence = sentence.replace('+', '*')
                     
                     # extract mor tags from sentence
                     words_raw, words_mor_tags, mor_dict = self.get_mor_result_v2(sentence)
+                    
                     
                     lex_tags = []
                     for word in words_raw:
@@ -594,6 +595,10 @@ class CnnLstmCrfModel(object):
                     
                     pred_ids, _ = self.predict_batch(sess, [words], [mor_tags], [lex_tags])
                     preds = [idx_to_tag[idx] for idx in list(pred_ids[0])]
+                    
+                    with open('data/challenge_data/mor_train_data_1008/more_train', 'w', encoding='utf-8') as f_w:
+                        for i in range(len(words_raw)):
+                            f_w.write('%s %s %s\n' % (words_raw[i], words_mor_tags[i], preds[i]))
 
                     key_count = 0
                     for each_lists in mor_dict.values():
@@ -718,8 +723,8 @@ class CnnLstmCrfModel(object):
         test_file_name = './data/test_data/test_file_test.txt'
         tag_result_file_name = './data/test_data/test_result_file_test_1009'
 
-        test_file_name = 'data/test_data/test_demo.txt'
-        tag_result_file_name = 'data/test_data/test_demo_result.txt'
+        test_file_name = 'data/test_data/test_file.txt'
+        tag_result_file_name = 'data/test_data/test_demo_result_1012.txt'
         
         idx_to_tag = {idx: tag for tag, idx in tags.items()}
         saver = tf.train.Saver()

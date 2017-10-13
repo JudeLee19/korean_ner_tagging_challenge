@@ -13,7 +13,8 @@ class Config():
         
 
     # general config
-    output_path = "data/model/"
+    #output_path = "data/model/"
+    output_path = "data/model_1012/"
     #output_path = "results/full_cnn_with_mor_lex_new_data_1008/"
     model_output = output_path + "model_fil_2345_600_100_128_drop_0.8_0924.weights"
     log_path = output_path + "log.txt"
@@ -51,6 +52,8 @@ class Config():
     
     # full training
     train_filename = "data/challenge_data/full_train_corpus_with_mor_new_09_24"
+    
+    train_filename = 'data/challenge_data/mor_train_data_1008/full_train_corpus_with_mor_new_10_12'
     dev_filename = "data/challenge_data/dev_corpus_with_mor_new_09_24"
     test_filename = "data/challenge_data/test_corpus_with_mor_new_09_24"
     
@@ -62,12 +65,19 @@ class Config():
     # tags_filename = "full_new_data_glove_100_0924/tags.txt"
     # chars_filename = "full_new_data_glove_100_0924/chars.txt"
     # lex_tags_filename = 'full_new_data_glove_100_0924/lex_tags.txt'
+    
+    # real demo
     words_filename = "data_vocab/words.txt"
     mor_tags_filename = 'data_vocab/mor_tags.txt'
     tags_filename = "data_vocab/tags.txt"
     chars_filename = "data_vocab/chars.txt"
     lex_tags_filename = 'data_vocab/lex_tags.txt'
-    
+
+    words_filename = "data_vocab_1012/words.txt"
+    mor_tags_filename = 'data_vocab_1012/mor_tags.txt'
+    tags_filename = "data_vocab_1012/tags.txt"
+    chars_filename = "data_vocab_1012/chars.txt"
+    lex_tags_filename = 'data_vocab_1012/lex_tags.txt'
     
     # training
     # train_embeddings = False
